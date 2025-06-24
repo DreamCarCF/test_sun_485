@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RS-485 数据监控</title>
+    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .data, .logs {
+            margin-top: 20px;
+        }
+        .data p, .logs p {
+            font-size: 18px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .logs {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 200px;
+            overflow-y: scroll;
+            background: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <h1>RS-485 监控系统</h1>
+    
+    <div class="data">
+        <p>电池实时电压：<span id="voltage">-</span> V</p>
+        <p>实时放电电流：<span id="current">-</span> A</p>
+        <p>电池电量：<span id="power">-</span> %</p>
+        <p>放电模式：<span id="outPut_style">-</span></p>
+        <p>充电状态<span id="charge_state">-</span></p>
+        <p>充电电流值<span id="charge_cur">-</span>A</p>
+    </div>
+
+    <div>
+        <button onclick="sendCommand(0x52)">获取实时电压</button>
+        <button onclick="sendCommand(0x55)">获取实时放电电流</button>
+        <button onclick="sendCommand(0x5B)">获取电池电量</button>
+        <button onclick="sendCommand(0x22)">获取放电模式</button> 
+        <button onclick="sendCommand(0x56)">获取充电状态</button> 
+        <button onclick="sendCommand(0x54)">获取充电电流</button> 
+        
+    </div>
+
+    <div class="logs">
+        <h3>日志</h3>
+        <div id="log"></div>
+    </div>
+
+    <div style="margin-top:30px;">
+        <h2>近7天发电量/放电量</h2>
+        <table border="1" cellpadding="8" id="sevenDaysTable">
+            <thead>
+                <tr>
+                    <th>日期</th>
+                    <th>发电量 (Ah)</th>
+                    <th>放电量 (Ah)</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <div id="sevenDaysChart" style="width: 100%; max-width: 700px; height: 350px; margin-top: 20px;"></div>
+    </div>
+
+    <script>
+        const socket = io("http://localhost:3000");
+
+        socket.on("connect", () => {
+            console.log("已连接到服务器");
+            addLog("已连接到服务器");
+        });
+
+        socket.on("data", (data) => {
+            // document.getElementById("voltage").innerText = data.voltage ?? "-";
+            // document.getElementById("current").innerText = data.current ?? "-";
+            // document.getElementById("power").innerText = data.power ?? "-";
+            checkData(data);
+            addLog("收到数据: " + JSON.stringify(data));
+        });
+
+        function checkData(data){
+            if(data.voltage != null) {
+                document.getElementById("voltage").innerText =  data.voltage;
+            }else if(data.current != null){
+                document.getElementById("current").innerText = data.current;
+            }else if(data.power != null){
+                document.getElementById("power").innerText = data.power;
+            }else if(data.outPut_style != null){
+                if(data.outPut_style == 0){
+                    document.getElementById("outPut_style").innerText = "常开";
+                }else if(data.outPut_style == 0.01){
+                    document.getElementById("outPut_style").innerText = "纯光控";
+                }else if(data.outPut_style == 0.02){
+                    document.getElementById("outPut_style").innerText = "光控+时控";
+                }
+
+            }else if(data.charge_state != null){
+                if(data.charge_state == 0){
+                    document.getElementById("charge_state").innerText = "未开启充电";
+                }else if(data.charge_state == 0.01){
+                    document.getElementById("charge_state").innerText = "直充充电";
+                }else if(data.charge_state == 0.02){
+                    document.getElementById("charge_state").innerText = "MPPT充电";
+                }else if(data.charge_state == 0.03){
+                    document.getElementById("charge_state").innerText = "浮充充电";
+                }else if(data.charge_state == 0.04){
+                    document.getElementById("charge_state").innerText = "均充充电";
+                }else if(data.charge_state == 0.05){
+                    document.getElementById("charge_state").innerText = "限流充电(超温)";
+                }else if(data.charge_state == 0.06){
+                    document.getElementById("charge_state").innerText = "限流充电(超功率)";
+                }
+                
+            }else if(data.charge_cur != null){
+                document.getElementById("charge_cur").innerText = data.charge_cur;
+            }
+
+
+        }
+
+        socket.on("log", (msg) => {
+            addLog(msg);
+        });
+
+        function sendCommand(register) {
+            const command = new Uint8Array([0x01, 0x03, (register >> 8) & 0xFF, register & 0xFF, 0x00, 0x01]);
+            socket.emit('sendCommand', command);
+            addLog(`发送指令: ${byteArrayToHex(command)}`);
+        }
+
+        function addLog(msg) {
+            const logDiv = document.getElementById("log");
+            logDiv.innerHTML += `<p>${new Date().toLocaleTimeString()} - ${msg}</p>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function byteArrayToHex(byteArray) {
+            return Array.from(byteArray, byte => byte.toString(16).padStart(2, "0")).join(" ").toUpperCase();
+        }
+
+        // 自动请求近7天数据
+        window.onload = function() {
+            // 初始化数据
+            window.chargeArr = [null, null, null, null, null];
+            window.loadArr = [null, null, null, null, null];
+            window.chargeCount = 0;
+            window.loadCount = 0;
+            socket.emit("get7DaysData");
+        };
+
+        socket.on("sevenDayDataItem", function(data) {
+            if(data.type === "charge") {
+                window.chargeArr[data.day] = data.value;
+                window.chargeCount++;
+            } else if(data.type === "load") {
+                window.loadArr[data.day] = data.value;
+                window.loadCount++;
+            }
+            // 收到5条发电量和5条放电量后渲染
+            if(window.chargeCount === 5 && window.loadCount === 5) {
+                renderSevenDaysTableAndChart({charge: window.chargeArr, load: window.loadArr});
+            }
+        });
+
+        function renderSevenDaysTableAndChart(data) {
+            // 生成日期（近7天，今天为最后一天）
+            const today = new Date();
+            const days = [];
+            for (let i = 6; i >= 2; i--) {
+                const d = new Date(today);
+                d.setDate(today.getDate() - i);
+                days.push(d.toLocaleDateString());
+            }
+            // 填充表格
+            const tbody = document.querySelector('#sevenDaysTable tbody');
+            tbody.innerHTML = '';
+            for (let i = 0; i < 5; i++) {
+                tbody.innerHTML += `<tr><td>${days[i]}</td><td>${data.charge[i] ?? '-'}</td><td>${data.load[i] ?? '-'}</td></tr>`;
+            }
+            // 折线图
+            const chart = echarts.init(document.getElementById('sevenDaysChart'));
+            chart.setOption({
+                tooltip: { trigger: 'axis' },
+                legend: { data: ['发电量', '放电量'] },
+                xAxis: { type: 'category', data: days.slice(0, 5) },
+                yAxis: { type: 'value', name: 'Ah' },
+                series: [
+                    { name: '发电量', type: 'line', data: data.charge },
+                    { name: '放电量', type: 'line', data: data.load }
+                ]
+            });
+        }
+    </script>
+</body>
+</html>
